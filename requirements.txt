@@ -1,0 +1,11 @@
+streamlit
+groq
+torch
+transformers
+soundfile
+numpy
+scipy
+langdetect
+python-dotenv
+langchain
+langchain-groq

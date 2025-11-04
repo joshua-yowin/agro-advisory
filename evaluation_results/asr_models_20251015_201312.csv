@@ -1,0 +1,3 @@
+model,speed,accuracy,language_support,recommended_for
+whisper-large-v3-turbo,Fast,High,99+ languages,Real-time applications
+whisper-large-v3,Standard,Very High,99+ languages,Maximum accuracy

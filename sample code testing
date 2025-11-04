@@ -1,0 +1,740 @@
+import streamlit as st
+import torch
+from transformers import VitsModel, AutoTokenizer
+import soundfile as sf
+from groq import Groq
+import os
+import io
+from datetime import datetime
+import re
+from dotenv import load_dotenv
+from langchain_groq import ChatGroq
+from langchain_core.chat_history import InMemoryChatMessageHistory
+from langchain_core.runnables.history import RunnableWithMessageHistory
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_core.output_parsers import StrOutputParser
+import uuid
+import base64
+import numpy as np
+
+load_dotenv()
+
+# ================================
+# PAGE CONFIGURATION
+# ================================
+st.set_page_config(
+    page_title="Agro AI Assistant",
+    page_icon="🌾",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# ================================
+# CSS (SAME AS BEFORE)
+# ================================
+st.markdown("""
+<style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Poppins:wght@400;500;600;700&display=swap');
+    
+    * { font-family: 'Inter', sans-serif; }
+    h1, h2, h3 { font-family: 'Poppins', sans-serif; }
+    
+    .stApp {
+        background: linear-gradient(-45deg, #667eea, #764ba2, #f093fb, #4facfe);
+        background-size: 400% 400%;
+        animation: gradientShift 15s ease infinite;
+    }
+    
+    @keyframes gradientShift {
+        0% { background-position: 0% 50%; }
+        50% { background-position: 100% 50%; }
+        100% { background-position: 0% 50%; }
+    }
+    
+    .user-bubble {
+        background: rgba(102, 126, 234, 0.95);
+        backdrop-filter: blur(10px);
+        border: 1px solid rgba(255, 255, 255, 0.3);
+        color: white !important;
+        padding: 20px 26px;
+        border-radius: 24px 24px 6px 24px;
+        margin: 16px 0;
+        max-width: 85%;
+        float: right;
+        clear: both;
+        box-shadow: 0 8px 32px rgba(102, 126, 234, 0.4);
+        animation: slideInRight 0.4s ease;
+        font-size: 16px;
+        line-height: 1.6;
+    }
+    
+    .ai-bubble {
+        background: rgba(255, 255, 255, 0.95);
+        backdrop-filter: blur(10px);
+        border: 1px solid rgba(255, 255, 255, 0.3);
+        color: #1a1a1a !important;
+        padding: 20px 26px 16px 26px;
+        border-radius: 24px 24px 24px 6px;
+        margin: 16px 0;
+        max-width: 85%;
+        float: left;
+        clear: both;
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
+        animation: slideInLeft 0.4s ease;
+        font-size: 16px;
+        line-height: 1.8;
+    }
+    
+    .warning-bubble {
+        background: rgba(255, 193, 7, 0.95);
+        color: #1a1a1a !important;
+        padding: 20px 26px;
+        border-radius: 20px;
+        margin: 16px auto;
+        max-width: 85%;
+        box-shadow: 0 8px 32px rgba(255, 193, 7, 0.4);
+    }
+    
+    @keyframes slideInRight {
+        from { transform: translateX(60px); opacity: 0; }
+        to { transform: translateX(0); opacity: 1; }
+    }
+    
+    @keyframes slideInLeft {
+        from { transform: translateX(-60px); opacity: 0; }
+        to { transform: translateX(0); opacity: 1; }
+    }
+    
+    .chat-container::after { content: ""; display: table; clear: both; }
+    
+    [data-testid="stSidebar"] {
+        background: rgba(255, 255, 255, 0.15);
+        backdrop-filter: blur(20px);
+        border-right: 1px solid rgba(255, 255, 255, 0.18);
+    }
+    
+    [data-testid="stSidebar"] * { color: white !important; }
+    
+    .stButton>button {
+        width: 100%;
+        border-radius: 14px;
+        font-weight: 600;
+        padding: 12px 24px;
+        transition: all 0.3s ease;
+        border: none;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        font-size: 16px;
+    }
+    
+    h1 {
+        color: white !important;
+        font-weight: 700 !important;
+        font-size: 3em !important;
+        text-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+    }
+    
+    h2, h3 { color: white !important; }
+    
+    .stTextInput input {
+        background: rgba(255, 255, 255, 0.95) !important;
+        border-radius: 14px !important;
+        border: 2px solid rgba(102, 126, 234, 0.3) !important;
+        padding: 16px !important;
+        font-size: 15px !important;
+        color: #1a1a1a !important;
+    }
+    
+    [data-testid="stMetricValue"] {
+        font-size: 28px !important;
+        font-weight: 700 !important;
+        color: white !important;
+    }
+    
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    
+    div[data-testid="column"] .stButton>button {
+        background: rgba(102, 126, 234, 0.1) !important;
+        border: 1px solid rgba(102, 126, 234, 0.3) !important;
+        color: #667eea !important;
+        padding: 6px 12px !important;
+        font-size: 14px !important;
+        border-radius: 8px !important;
+        width: auto !important;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# ================================
+# RAG KNOWLEDGE BASE
+# ================================
+AGRICULTURE_KNOWLEDGE = {
+    "green gram": """Green Gram (Moong Dal) cultivation guide:
+    Soil: Well-draining loamy soil, pH 6.5-7.5
+    Varieties: PM-1, PM-2, Pusa Vishal
+    Sowing: June-July (Kharif), spacing 30cm rows
+    Irrigation: 2-3 times at flowering
+    Harvest: 60-70 days
+    Yield: 8-10 quintals per hectare""",
+    "tomato": """Tomato cultivation: pH 6.0-6.8, varieties Cherry/Roma/Beefsteak, 60-90cm spacing""",
+    "wheat": """Wheat: Rabi crop, November-December sowing, 130-150 days harvest""",
+}
+
+def get_rag_context(query: str) -> str:
+    query_lower = query.lower()
+    for crop, info in AGRICULTURE_KNOWLEDGE.items():
+        if crop in query_lower or any(word in query_lower for word in crop.split()):
+            return info
+    return ""
+
+# ================================
+# ENHANCED MULTILINGUAL KEYWORDS
+# ================================
+AGRICULTURE_KEYWORDS = {
+    "english": ["crop", "farm", "soil", "seed", "fertilizer", "irrigation", "harvest", "plant", "agriculture", "tomato", "wheat", "rice", "green gram", "moong"],
+    "hindi": ["खेती", "किसान", "फसल", "बीज", "खाद", "सिंचाई", "पानी", "मिट्टी", "टमाटर", "गेहूं", "मूंग"],
+    "tamil": ["விவசாயம்", "பயிர்", "நெல்", "தக்காளி", "கோதுமை", "பச்சை", "பயிறு", "பசுமை", "விதை", "நீர்"],
+    "telugu": ["వ్యవసాయం", "పంట", "వరి", "గోధుమ", "టమాటా", "పచ్చి"],
+    "bengali": ["কৃষি", "শস্য", "ধান", "গম", "টমেটো"],
+}
+
+LANGUAGES = {
+    "English": {"code": "en", "tts_model": "facebook/mms-tts-eng"},
+    "Hindi": {"code": "hi", "tts_model": "facebook/mms-tts-hin"},
+    "Tamil": {"code": "ta", "tts_model": "facebook/mms-tts-tam"},
+    "Telugu": {"code": "te", "tts_model": "facebook/mms-tts-tel"},
+    "Bengali": {"code": "bn", "tts_model": "facebook/mms-tts-ben"},
+    "Marathi": {"code": "mr", "tts_model": "facebook/mms-tts-mar"},
+    "Gujarati": {"code": "gu", "tts_model": "facebook/mms-tts-guj"},
+    "Kannada": {"code": "kn", "tts_model": "facebook/mms-tts-kan"},
+    "Malayalam": {"code": "ml", "tts_model": "facebook/mms-tts-mal"},
+    "Punjabi": {"code": "pa", "tts_model": "facebook/mms-tts-pan"},
+}
+
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+HF_API_KEY = os.getenv("HUGGINGFACE_API_KEY")
+
+# ================================
+# NUMBER TO WORDS CONVERSION
+# ================================
+def number_to_words_english(n):
+    """Convert numbers to English words"""
+    ones = ["", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine"]
+    tens = ["", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety"]
+    teens = ["ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen"]
+    
+    if n == 0:
+        return "zero"
+    elif n < 10:
+        return ones[n]
+    elif n < 20:
+        return teens[n - 10]
+    elif n < 100:
+        return tens[n // 10] + (" " + ones[n % 10] if n % 10 != 0 else "")
+    elif n < 1000:
+        return ones[n // 100] + " hundred" + (" and " + number_to_words_english(n % 100) if n % 100 != 0 else "")
+    else:
+        return str(n)
+
+def convert_numbers_to_words(text, language="English"):
+    """Convert all numbers in text to words"""
+    def replace_number(match):
+        num = int(match.group())
+        if language == "English":
+            return number_to_words_english(num)
+        else:
+            # For other languages, keep as-is (TTS models handle them)
+            return match.group()
+    
+    # Replace numbers with words
+    text = re.sub(r'\b\d+\b', replace_number, text)
+    return text
+
+# ================================
+# UTILITY FUNCTIONS
+# ================================
+def is_agriculture_related(query: str, language: str = "english") -> tuple[bool, str]:
+    """FIXED: Better multilingual agricultural detection"""
+    query_lower = query.lower()
+    
+    # Check keywords for selected language
+    keywords = AGRICULTURE_KEYWORDS.get(language.lower(), AGRICULTURE_KEYWORDS["english"])
+    
+    # Also check English keywords as fallback
+    all_keywords = keywords + AGRICULTURE_KEYWORDS["english"]
+    
+    keyword_matches = sum(1 for keyword in all_keywords if keyword.lower() in query_lower)
+    
+    # More lenient: Accept if any keyword found
+    if keyword_matches >= 1:
+        return True, "Agricultural query detected"
+    
+    # Check common agricultural terms
+    common_agri_terms = ["farm", "crop", "plant", "grow", "harvest", "soil", "water", "seed"]
+    if any(term in query_lower for term in common_agri_terms):
+        return True, "Agricultural term found"
+    
+    return (False, "Not agricultural")
+
+def get_rejection_message(language: str) -> str:
+    messages = {
+        "English": "I specialize in agriculture and farming. Please ask about crops, livestock, or farming.",
+        "Hindi": "मैं केवल कृषि में विशेषज्ञ हूं। कृपया फसलों के बारे में पूछें।",
+        "Tamil": "நான் விவசாயத்தில் மட்டுமே நிபுணத்துவம் பெற்றவன். பயிர்கள் பற்றி கேளுங்கள்.",
+        "Telugu": "నేను వ్యవసాయంలో మాత్రమే నైపుణ్యం కలిగి ఉన్నాను।",
+        "Bengali": "আমি কৃষিতে বিশেষজ্ঞ। শস্য সম্পর্কে জিজ্ঞাসা করুন।",
+    }
+    return messages.get(language, messages["English"])
+
+def get_session_title(query: str) -> str:
+    return query[:40] + "..." if len(query) > 40 else query
+
+def create_new_session():
+    session_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+    st.session_state.current_session_id = session_id
+    st.session_state.conversation_count = 0
+    st.session_state.rejected_count = 0
+    st.session_state.chat_history_display[session_id] = []
+    st.session_state.session_titles[session_id] = "New Chat"
+    st.rerun()
+
+def delete_chat_session(session_id):
+    if session_id in st.session_state.session_titles:
+        del st.session_state.session_titles[session_id]
+    if session_id in st.session_state.chat_history_display:
+        del st.session_state.chat_history_display[session_id]
+    if session_id in st.session_state.history_store:
+        del st.session_state.history_store[session_id]
+    
+    if st.session_state.current_session_id == session_id:
+        if st.session_state.session_titles:
+            st.session_state.current_session_id = list(st.session_state.session_titles.keys())[-1]
+        else:
+            create_new_session()
+    st.rerun()
+
+# ================================
+# RAG-ENHANCED AI
+# ================================
+def get_conversation_chain(language_name):
+    llm = ChatGroq(model="llama-3.3-70b-versatile", api_key=GROQ_API_KEY, temperature=0.7, max_tokens=2048)
+    
+    system_message = f"""You are Agro AI Assistant. Respond ONLY in {language_name} native script.
+
+INSTRUCTIONS:
+- Use provided agricultural context when available
+- Ask follow-up questions for farming projects
+- Provide detailed, practical advice
+- Be conversational and supportive
+- For numbers, write them as words in {language_name}
+
+When responding in {language_name}:
+- Use native script exclusively
+- Write numbers as words
+- Be clear and detailed"""
+    
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", system_message),
+        MessagesPlaceholder(variable_name="history"),
+        ("human", "{input}")
+    ])
+    
+    chain = prompt | llm | StrOutputParser()
+    
+    if 'history_store' not in st.session_state:
+        st.session_state.history_store = {}
+    
+    def get_session_history(session_id: str):
+        if session_id not in st.session_state.history_store:
+            st.session_state.history_store[session_id] = InMemoryChatMessageHistory()
+        return st.session_state.history_store[session_id]
+    
+    return RunnableWithMessageHistory(chain, get_session_history, input_messages_key="input", history_messages_key="history")
+
+@st.cache_resource
+def load_tts_model(model_id):
+    try:
+        model = VitsModel.from_pretrained(model_id, token=HF_API_KEY)
+        tokenizer = AutoTokenizer.from_pretrained(model_id, token=HF_API_KEY)
+        return model, tokenizer
+    except:
+        return None, None
+
+@st.cache_resource
+def init_groq_client():
+    return Groq(api_key=GROQ_API_KEY)
+
+def transcribe_audio(audio_bytes, language_code):
+    try:
+        groq_client = init_groq_client()
+        temp_filename = f"temp_audio_{uuid.uuid4().hex}.wav"
+        with open(temp_filename, "wb") as f:
+            f.write(audio_bytes)
+        with open(temp_filename, "rb") as audio_file:
+            transcription = groq_client.audio.transcriptions.create(
+                file=(temp_filename, audio_file.read()),
+                model="whisper-large-v3-turbo",
+                language=language_code,
+                temperature=0.0
+            )
+        os.remove(temp_filename)
+        return transcription.text
+    except Exception as e:
+        st.error(f"Transcription error: {str(e)}")
+        return None
+
+def split_text_for_tts(text, max_length=250):
+    """Split text for TTS with number conversion"""
+    sentences = re.split(r'([.!?।॥]+\s*)', text)
+    chunks = []
+    current_chunk = ""
+    
+    for i in range(0, len(sentences), 2):
+        sentence = sentences[i]
+        separator = sentences[i+1] if i+1 < len(sentences) else ""
+        
+        if len(current_chunk) + len(sentence) + len(separator) <= max_length:
+            current_chunk += sentence + separator
+        else:
+            if current_chunk:
+                chunks.append(current_chunk.strip())
+            current_chunk = sentence + separator
+    
+    if current_chunk:
+        chunks.append(current_chunk.strip())
+    
+    return chunks if chunks else [text]
+
+def generate_speech_bytes(text_chunk, model, tokenizer, sample_rate):
+    """Generate speech for text chunk"""
+    try:
+        text_chunk = text_chunk.strip()
+        if not text_chunk or len(text_chunk) < 5:
+            return None
+        
+        inputs = tokenizer(text_chunk, return_tensors="pt")
+        
+        with torch.no_grad():
+            output = model(**inputs).waveform
+        
+        audio_array = output.cpu().numpy().squeeze()
+        audio_array = audio_array / np.max(np.abs(audio_array)) * 0.95
+        
+        return audio_array
+        
+    except Exception as e:
+        return None
+
+def concatenate_audio_arrays(audio_arrays, sample_rate):
+    """Concatenate audio arrays"""
+    if not audio_arrays:
+        return None
+    
+    try:
+        full_audio = np.concatenate(audio_arrays)
+        full_audio = full_audio / np.max(np.abs(full_audio)) * 0.95
+        
+        final_audio = io.BytesIO()
+        sf.write(final_audio, full_audio, sample_rate, format='WAV', subtype='PCM_16')
+        final_audio.seek(0)
+        
+        return final_audio.read()
+    except Exception as e:
+        st.error(f"Audio error: {str(e)}")
+        return None
+
+def play_audio_html(audio_data):
+    """Play audio"""
+    b64 = base64.b64encode(audio_data).decode()
+    audio_html = f"""
+    <audio controls autoplay style="width: 100%; margin: 10px 0; border-radius: 8px;">
+        <source src="data:audio/wav;base64,{b64}" type="audio/wav">
+    </audio>
+    """
+    st.markdown(audio_html, unsafe_allow_html=True)
+
+def generate_full_tts(text, language):
+    """Generate continuous audio with number conversion"""
+    # Convert numbers to words for English
+    if language == "English":
+        text = convert_numbers_to_words(text, language)
+    
+    tts_model_id = LANGUAGES[language]["tts_model"]
+    tts_model, tts_tokenizer = load_tts_model(tts_model_id)
+    
+    if not tts_model or not tts_tokenizer:
+        st.error("TTS not available")
+        return
+    
+    chunks = split_text_for_tts(text, max_length=250)
+    
+    if not chunks:
+        st.warning("No text to speak")
+        return
+    
+    progress_text = st.empty()
+    progress_bar = st.progress(0)
+    audio_arrays = []
+    
+    for i, chunk in enumerate(chunks):
+        progress_text.text(f"🔊 Generating audio {i+1}/{len(chunks)}...")
+        progress_bar.progress((i + 1) / len(chunks))
+        
+        audio_array = generate_speech_bytes(chunk, tts_model, tts_tokenizer, tts_model.config.sampling_rate)
+        if audio_array is not None:
+            audio_arrays.append(audio_array)
+    
+    progress_text.empty()
+    progress_bar.empty()
+    
+    if audio_arrays:
+        st.success(f"✅ Audio ready ({len(chunks)} segments)")
+        full_audio = concatenate_audio_arrays(audio_arrays, tts_model.config.sampling_rate)
+        
+        if full_audio:
+            play_audio_html(full_audio)
+        else:
+            st.error("Failed to combine audio")
+    else:
+        st.error("Failed to generate audio")
+
+def process_query(query_text, selected_language, enable_strict_mode):
+    if not query_text or not query_text.strip():
+        st.warning("Please enter a question")
+        return
+    
+    session_id = st.session_state.current_session_id
+    
+    if not st.session_state.chat_history_display[session_id]:
+        title = get_session_title(query_text)
+        st.session_state.session_titles[session_id] = title
+    
+    st.session_state.chat_history_display[session_id].append({
+        "role": "user",
+        "content": query_text,
+        "timestamp": datetime.now().strftime("%H:%M:%S")
+    })
+    
+    if enable_strict_mode:
+        is_valid, reason = is_agriculture_related(query_text, selected_language)
+        if not is_valid:
+            rejection_msg = get_rejection_message(selected_language)
+            st.session_state.chat_history_display[session_id].append({
+                "role": "system",
+                "content": rejection_msg,
+                "timestamp": datetime.now().strftime("%H:%M:%S"),
+                "rejected": True
+            })
+            st.session_state.rejected_count += 1
+            st.rerun()
+            return
+    
+    try:
+        # RAG context
+        rag_context = get_rag_context(query_text)
+        
+        enhanced_query = query_text
+        if rag_context:
+            enhanced_query = f"Context:\n{rag_context}\n\nQuery: {query_text}"
+        
+        response = st.session_state.conversation_chain.invoke(
+            {"input": enhanced_query},
+            config={"configurable": {"session_id": session_id}}
+        )
+        
+        message_id = f"msg_{len(st.session_state.chat_history_display[session_id])}"
+        
+        st.session_state.chat_history_display[session_id].append({
+            "role": "assistant",
+            "content": response,
+            "timestamp": datetime.now().strftime("%H:%M:%S"),
+            "message_id": message_id
+        })
+        
+        st.session_state.conversation_count += 1
+        st.rerun()
+        
+    except Exception as e:
+        st.error(f"Error: {str(e)}")
+        st.rerun()
+
+# ================================
+# INITIALIZATION
+# ================================
+if 'current_session_id' not in st.session_state:
+    st.session_state.session_titles = {}
+    st.session_state.chat_history_display = {}
+    st.session_state.selected_language = "English"
+    st.session_state.is_recording = False
+    create_new_session()
+
+if 'conversation_chain' not in st.session_state:
+    st.session_state.conversation_chain = get_conversation_chain(st.session_state.selected_language)
+
+if 'conversation_count' not in st.session_state:
+    st.session_state.conversation_count = 0
+
+if 'rejected_count' not in st.session_state:
+    st.session_state.rejected_count = 0
+
+# ================================
+# SIDEBAR
+# ================================
+with st.sidebar:
+    st.title("Agro AI Assistant 🌾")
+    st.caption("Multilingual RAG-Powered")
+    st.markdown("")
+    
+    if st.button("➕ New Chat", use_container_width=True, type="primary"):
+        create_new_session()
+    
+    st.markdown("---")
+    
+    st.subheader("Chat History")
+    
+    session_ids = list(st.session_state.session_titles.keys())
+    if session_ids:
+        for session_id in reversed(session_ids):
+            title = st.session_state.session_titles[session_id]
+            is_active = session_id == st.session_state.current_session_id
+            
+            col1, col2 = st.columns([5, 1])
+            
+            with col1:
+                if st.button(
+                    f"{'📌 ' if is_active else '💬 '}{title}",
+                    key=f"chat_{session_id}",
+                    use_container_width=True,
+                    type="secondary" if not is_active else "primary"
+                ):
+                    st.session_state.current_session_id = session_id
+                    st.rerun()
+            
+            with col2:
+                if st.button("🗑️", key=f"del_{session_id}", help="Delete"):
+                    delete_chat_session(session_id)
+    else:
+        st.caption("No history")
+    
+    st.markdown("---")
+    
+    st.subheader("Settings")
+    
+    selected_language = st.selectbox(
+        "Language:",
+        options=list(LANGUAGES.keys()),
+        index=0
+    )
+    
+    # Update chain if language changed
+    if selected_language != st.session_state.selected_language:
+        st.session_state.selected_language = selected_language
+        st.session_state.conversation_chain = get_conversation_chain(selected_language)
+    
+    enable_strict_mode = st.checkbox("Filter", value=False)  # Less strict by default
+    
+    st.markdown("---")
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        st.metric("Queries", st.session_state.conversation_count)
+    with col2:
+        st.metric("Filtered", st.session_state.rejected_count)
+
+# ================================
+# MAIN APP
+# ================================
+st.title("Agro AI Assistant")
+st.markdown("### Multilingual Farming Advisor")
+
+if not GROQ_API_KEY:
+    st.error("GROQ_API_KEY required")
+    st.stop()
+
+current_history = st.session_state.chat_history_display.get(st.session_state.current_session_id, [])
+
+if current_history:
+    st.markdown('<div class="chat-container">', unsafe_allow_html=True)
+    
+    for idx, message in enumerate(current_history):
+        if message["role"] == "user":
+            st.markdown(f"""
+            <div class="user-bubble">
+                <strong>You</strong> <span style="opacity: 0.8; font-size: 0.85em;">({message['timestamp']})</span><br>
+                {message['content']}
+            </div>
+            """, unsafe_allow_html=True)
+        elif message["role"] == "system" and message.get("rejected"):
+            st.markdown(f"""
+            <div class="warning-bubble">
+                <strong>System</strong><br>
+                {message['content']}
+            </div>
+            """, unsafe_allow_html=True)
+        else:
+            st.markdown(f"""
+            <div class="ai-bubble">
+                <strong>Agro AI</strong> <span style="opacity: 0.8; font-size: 0.85em;">({message['timestamp']})</span><br>
+                {message['content']}
+            </div>
+            """, unsafe_allow_html=True)
+            
+            message_id = message.get("message_id", f"msg_{idx}")
+            col1, col2, col3 = st.columns([1, 8, 1])
+            with col1:
+                if st.button(f"🔊 Listen", key=f"speak_{message_id}"):
+                    generate_full_tts(message['content'], selected_language)
+    
+    st.markdown('</div>', unsafe_allow_html=True)
+    st.markdown('<div style="clear: both;"></div>', unsafe_allow_html=True)
+else:
+    st.info(f"👋 Ask in {selected_language}! பயிர்கள் பற்றி கேளுங்கள்!")
+
+# ================================
+# INPUT
+# ================================
+st.markdown("---")
+st.markdown("### Ask Your Question")
+
+col1, col2 = st.columns([10, 1])
+
+with col1:
+    text_query = st.text_input(
+        "Type:",
+        placeholder="எனக்கு பச்சை பயிறு பற்றி சொல்லுங்கள்",
+        label_visibility="collapsed",
+        key="text_input"
+    )
+
+with col2:
+    if st.button("🎤", key="mic_button"):
+        st.session_state.is_recording = not st.session_state.is_recording
+
+if st.session_state.is_recording:
+    audio_input = st.audio_input("Record", key="audio_input", label_visibility="collapsed")
+    
+    if audio_input:
+        audio_bytes = audio_input.getvalue()
+        language_code = LANGUAGES[selected_language]["code"]
+        
+        with st.spinner("Processing..."):
+            transcribed_text = transcribe_audio(audio_bytes, language_code)
+            
+            if transcribed_text:
+                st.success(f"✅ {transcribed_text}")
+                st.session_state.is_recording = False
+                process_query(transcribed_text, selected_language, enable_strict_mode)
+
+if st.button("Send", type="primary", use_container_width=True):
+    if text_query:
+        process_query(text_query, selected_language, enable_strict_mode)
+    else:
+        st.warning("Please enter text")
+
+st.markdown("---")
+st.markdown("""
+<div style="text-align: center; color: white;">
+    <p style="font-size: 14px;">RAG • Groq • Llama 3.3 • Multilingual TTS</p>
+</div>
+""", unsafe_allow_html=True)
