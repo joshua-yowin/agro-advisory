@@ -1,4 +1,0 @@
-model,total_questions,successful_responses,avg_response_time,avg_tokens_used,avg_relevance_score,avg_response_length,errors,accuracy
-llama-3.3-70b-versatile,8,8,1.1010706424713135,278.75,26.041666666666664,454.0,0,100.0
-llama-3.1-70b-versatile,8,0,0.0,0.0,0.0,0.0,8,0.0
-mixtral-8x7b-32768,8,0,0.0,0.0,0.0,0.0,8,0.0

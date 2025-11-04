@@ -1,8 +1,54 @@
-.streamlit/secrets.toml
+# -----------------------------
+# Python and Streamlit Project
+# -----------------------------
+
+# Byte-compiled / cache files
 __pycache__/
-*.pyc
-*.wav
-.env
+*.py[cod]
+*$py.class
+
+# Virtual environment
 venv/
+env/
+
+# Streamlit secrets and config
+.streamlit/secrets.toml
+.streamlit/config.toml
+
+# Environment variables
+.env
+
+# Data, audio, and temp files
+*.wav
 *.mp3
 *.m4a
+*.csv
+*.json
+
+# macOS system files
+.DS_Store
+
+# Logs and checkpoints
+*.log
+*.ckpt
+
+# Jupyter and Colab
+.ipynb_checkpoints/
+
+# Build, dist and packaging
+build/
+dist/
+*.egg-info/
+
+# IDE and editor settings
+.vscode/
+.idea/
+
+# Evaluation result exports
+evaluation_results/
+
+# -----------------------------
+# Optional (if you have large models)
+# -----------------------------
+models/
+downloads/

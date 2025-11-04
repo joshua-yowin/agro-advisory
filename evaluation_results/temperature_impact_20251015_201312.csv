@@ -1,7 +1,0 @@
-temperature,response_time,response_length,word_count,sentence_count,avg_sentence_length,tokens_used,quality_score
-0.0,0.57,739,106,14,7.6,203,60.0
-0.3,0.62,782,113,15,7.5,211,60.0
-0.5,0.92,660,92,15,6.1,189,60.0
-0.7,0.92,795,116,16,7.2,218,60.0
-1.0,0.61,717,98,15,6.5,196,60.0
-1.5,0.61,744,106,15,7.1,211,80.0
